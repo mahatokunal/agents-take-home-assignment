@@ -15,7 +15,8 @@ function loadRun(name) {
     .split("\n")
     .filter(Boolean)
     .map((line) => JSON.parse(line));
-  return { output, trace };
+  const validate = readFileSync(resolve(here, name, "validate.txt"), "utf8");
+  return { output, trace, validate };
 }
 
 const llm = loadRun("llm");
@@ -120,6 +121,9 @@ const html = `<!doctype html>
   .v-check .detail { color: var(--text); margin-top: 1px; }
   .v-tools { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
   .v-tool-chip { font-family: ui-monospace, SF Mono, monospace; font-size: 11.5px; background: var(--panel); border: 1px solid var(--border); color: var(--accent); padding: 3px 8px; border-radius: 4px; }
+  .v-raw { margin-top: 12px; background: #000; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; font-family: ui-monospace, SF Mono, monospace; font-size: 12px; color: #b8e6c8; white-space: pre-wrap; line-height: 1.55; }
+  .v-raw .v-raw-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-size: 10.5px; margin-bottom: 4px; }
+  .v-disclaimer { margin-top: 8px; color: var(--muted); font-size: 11.5px; font-style: italic; }
 </style>
 </head>
 <body>
@@ -242,6 +246,10 @@ const html = `<!doctype html>
       </div>
       <div class="v-checks">\${checksHtml}</div>
       <div class="v-tools">\${toolsHtml}</div>
+      <div class="v-raw">
+        <div class="v-raw-label">Ground truth — captured stdout from \`npm run validate\` on this snapshot</div>\${escapeHtml(getRun().validate.trim())}
+      </div>
+      <div class="v-disclaimer">The checks above are recomputed in-browser from the embedded JSON. The block underneath is the verbatim output of the actual <code>src/validate.ts</code> run against these snapshot files — that is the authoritative pass/fail.</div>
     \`;
   }
 

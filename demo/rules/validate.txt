@@ -1,0 +1,5 @@
+
+> agents-take-home-assignment@1.0.0 validate
+> tsx --env-file-if-exists=.env src/validate.ts --input data/inbox.json --output demo/rules/output.json --trace demo/rules/trace.jsonl
+
+Validation passed.
