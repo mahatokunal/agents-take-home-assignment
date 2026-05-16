@@ -41,23 +41,23 @@ const html = `<!doctype html>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;0,6..72,700;1,6..72,400;1,6..72,500&family=IBM+Plex+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
   :root {
-    --paper: #f4ede0;
-    --paper-2: #ede4d2;
-    --paper-3: #e3d8c2;
-    --ink: #1f1c17;
-    --ink-2: #4a463c;
-    --ink-3: #7a7466;
-    --ink-4: #a8a294;
-    --rule: rgba(31, 28, 23, 0.14);
-    --rule-2: rgba(31, 28, 23, 0.08);
-    --accent: #c25237;
-    --accent-soft: rgba(194, 82, 55, 0.1);
-    --sage: #607e5f;
-    --sage-soft: rgba(96, 126, 95, 0.12);
-    --amber: #b58030;
-    --amber-soft: rgba(181, 128, 48, 0.14);
-    --crimson: #a23029;
-    --crimson-soft: rgba(162, 48, 41, 0.12);
+    --paper: #f4f3ee;        /* pale cool stone — almost neutral with a whisper of green-grey */
+    --paper-2: #ebe9e1;
+    --paper-3: #ddd9cd;
+    --ink: #161a21;          /* deep cool charcoal — slight blue undertone */
+    --ink-2: #3d434d;
+    --ink-3: #6f747e;
+    --ink-4: #a5a8af;
+    --rule: rgba(22, 26, 33, 0.13);
+    --rule-2: rgba(22, 26, 33, 0.06);
+    --accent: #2f6b5d;       /* deep teal — calm, distinctive, pediatric-friendly */
+    --accent-soft: rgba(47, 107, 93, 0.1);
+    --sage: #5e8268;         /* success — muted forest */
+    --sage-soft: rgba(94, 130, 104, 0.13);
+    --amber: #a17132;        /* warning — deeper ochre, less desert */
+    --amber-soft: rgba(161, 113, 50, 0.13);
+    --crimson: #8b2e2e;      /* P0 — oxblood, considered not alarming */
+    --crimson-soft: rgba(139, 46, 46, 0.11);
     --serif: 'Newsreader', 'Iowan Old Style', Georgia, serif;
     --sans: 'IBM Plex Sans', -apple-system, sans-serif;
     --mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
@@ -72,10 +72,9 @@ const html = `<!doctype html>
     line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     background-image:
-      radial-gradient(rgba(31, 28, 23, 0.025) 1px, transparent 1px),
-      radial-gradient(rgba(31, 28, 23, 0.025) 1px, transparent 1px);
-    background-size: 24px 24px, 24px 24px;
-    background-position: 0 0, 12px 12px;
+      linear-gradient(rgba(22, 26, 33, 0.018) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(22, 26, 33, 0.018) 1px, transparent 1px);
+    background-size: 56px 56px, 56px 56px;
   }
   ::selection { background: var(--accent); color: var(--paper); }
 
@@ -304,8 +303,8 @@ const html = `<!doctype html>
 
   .ground-truth {
     margin-top: 14px;
-    background: #15130f;
-    color: #cfb98a;
+    background: #11151c;
+    color: #c8cdd6;
     padding: 14px 16px;
     font-family: var(--mono);
     font-size: 11.5px;
@@ -315,14 +314,14 @@ const html = `<!doctype html>
     border-left: 3px solid var(--accent);
   }
   .ground-truth .gt-label {
-    color: #756d57;
+    color: #5a626d;
     font-size: 9.5px;
     letter-spacing: 0.18em;
     text-transform: uppercase;
     margin-bottom: 8px;
     display: block;
   }
-  .ground-truth .gt-pass { color: #92c79f; }
+  .ground-truth .gt-pass { color: #8acea0; }
   .gate-disclaimer {
     margin-top: 10px;
     font-family: var(--serif);
@@ -784,7 +783,7 @@ const html = `<!doctype html>
 
   /* Draft */
   .draft-card {
-    background: #faf5e9;
+    background: #fbfaf6;
     border: 1px solid var(--ink);
     padding: 0;
     position: relative;
