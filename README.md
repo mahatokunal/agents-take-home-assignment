@@ -129,6 +129,40 @@ Hybrid pipeline. For each `InboxItem` (processed in parallel under `withItemCont
 
 Trace and output stay 1:1 by construction: every call goes through `withItemContext`, no entry is mutated, and no `audit_exempt` calls are made.
 
+## Validation
+
+`npm run validate` runs the structural validator in `src/validate.ts` against the produced `output.json` and `.trace/tool-calls.jsonl`. It is a hard gate, not an advisory check — non-zero exit on any failure. The seven checks:
+
+| Check | What it enforces |
+|---|---|
+| JSON schema | Output conforms to `schema/output.schema.json` (AJV, strict). |
+| Item coverage | Every input `id` has exactly one output; no unknown ids, no duplicates. |
+| Summary counts | `summary.total_items`, `p0_count`, `p1_count`, `requires_human_review_count` are recomputed from `items[]` and must match. |
+| Human review | `requires_human_review === true` for every item. |
+| Tool diversity | At least 3 distinct tool names across the batch. |
+| No forbidden tools | `schedule_appointment` and `send_message` never appear (output or trace). |
+| Trace ↔ output 1:1 | Every non-`audit_exempt` trace call appears in exactly one item's `tools_called` with identical `name`, canonicalized `args`, and `result_summary`. No orphan trace calls, no fabricated `call_id`s. |
+
+Current state on both runs (LLM path and rules-only fallback): **all seven checks pass.** Snapshot stdout is captured in `demo/llm/validate.txt` and `demo/rules/validate.txt`.
+
+### Eval limitations
+
+The validator is structural, not semantic. It will not tell you that item_2 was *correctly* classified as `safeguarding`, that item_3 (Kaiser) *correctly* skipped `hold_slot`, or that the draft for item_5 contained no clinical advice. Those judgments are still manual — see `demo/index.html` for a per-item walkthrough that surfaces them.
+
+A semantic regression suite (golden classification + required-tool-sequence per visible item, plus an LLM-judge harness for draft quality) is listed in [What I would do with another 4 hours](#what-i-would-do-with-another-4-hours).
+
+### Demo viewer
+
+`demo/index.html` is a self-contained page (open it directly via `file://`, no server) showing:
+
+- The 8 input inbox items (sender, channel, body, attachments).
+- The agent's decision per item — classification, urgency, rationale, missing info, draft reply, escalation.
+- Every tool call in order with its args (pretty JSON) and `result_summary`.
+- A live re-implementation of all 7 validator checks plus the **verbatim stdout** of the real `npm run validate` run captured against the embedded snapshots.
+- A toggle between the LLM path and the rules-only fallback so you can see how the agent degrades when `ANTHROPIC_API_KEY` is unset.
+
+Regenerate after a fresh triage run with `node demo/generate.mjs`.
+
 ## Failure modes and production eval
 
 - **LLM hallucinating intake** — mitigated by structured output (forced tool use with a strict JSON schema) and by treating intake as `null` when the schema validator on Anthropic's side would reject. In production I would also diff `extracted_intake` against OCR of the referral attachment.
