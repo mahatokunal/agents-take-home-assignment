@@ -1,35 +1,32 @@
-import {
-  create_task,
-  draft_message,
-  getToolCallsForItem,
-  lookup_policy,
-  withItemContext,
-} from "./tools.js";
+import { extract } from "./llm/extract.js";
+import { getToolCallsForItem, withItemContext } from "./tools.js";
+import { buildItemOutput } from "./triage/buildItemOutput.js";
+import { routeAndHandle } from "./triage/router.js";
+import { warn } from "./util/log.js";
 import type { InboxItem, ItemOutput } from "./types.js";
 
 export async function runAgent(inbox: InboxItem[]): Promise<ItemOutput[]> {
   return Promise.all(
     inbox.map((item) =>
-      withItemContext(item.id, async () => processItemStub(item)),
+      withItemContext(item.id, async () => processItem(item)),
     ),
   );
 }
 
-async function processItemStub(item: InboxItem): Promise<ItemOutput> {
-  await lookup_policy({ topic: "service_lines" });
-  const task = await create_task({
-    assignee: "front_desk",
-    title: `Review inbox item ${item.id}`,
-    due: today(),
-    notes: `Auto-stub: needs human triage. Subject: ${item.subject}`,
-  });
-  await draft_message({
-    recipient: item.sender,
-    channel: "email",
-    body: "Thanks for your message. A team member will follow up shortly.",
-    language: "en",
-  });
+async function processItem(item: InboxItem): Promise<ItemOutput> {
+  try {
+    const extraction = await extract(item);
+    const handlerResult = await routeAndHandle(item, extraction);
+    return buildItemOutput(item, extraction, handlerResult);
+  } catch (err) {
+    warn(
+      `processItem failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return failsafeOutput(item);
+  }
+}
 
+function failsafeOutput(item: InboxItem): ItemOutput {
   return {
     item_id: item.id,
     classification: "other",
@@ -44,17 +41,14 @@ async function processItemStub(item: InboxItem): Promise<ItemOutput> {
       payer: null,
       member_id: null,
     },
-    missing_info: ["stub — extraction not implemented yet"],
+    missing_info: ["agent error — full extraction unavailable"],
     tools_called: getToolCallsForItem(item.id),
-    recommended_next_action: "Human review required (stub agent).",
-    draft_reply:
-      "Thanks for your message. A team member will follow up shortly.",
-    task_ids: [task.data.task_id],
+    recommended_next_action:
+      "Internal triage error — front desk should review this item manually.",
+    draft_reply: null,
+    task_ids: [],
     escalation: null,
-    decision_rationale: "Stub implementation: full triage logic not yet wired.",
+    decision_rationale:
+      "The triage agent encountered an internal error processing this item. Falling back to a minimal output so the batch can complete.",
   };
-}
-
-function today(): string {
-  return new Date().toISOString().slice(0, 10);
 }
