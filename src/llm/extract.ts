@@ -1,9 +1,14 @@
+import type Anthropic from "@anthropic-ai/sdk";
 import type {
   Classification,
   ExtractedIntake,
   InboxItem,
   Urgency,
 } from "../types.js";
+import { getAnthropicClient, DEFAULT_MODEL } from "./client.js";
+import { SYSTEM_PROMPT, buildUserPrompt } from "./prompts.js";
+import { warn } from "../util/log.js";
+import { extractWithRules } from "../triage/classify.js";
 
 export interface ExtractionResult {
   classification: Classification;
@@ -105,9 +110,47 @@ export const EXTRACTION_TOOL_SCHEMA = {
   },
 } as const;
 
-// Stub — real implementation lands in Task 6.
 export async function extractWithLLM(
-  _item: InboxItem,
+  item: InboxItem,
 ): Promise<ExtractionResult | null> {
-  return null;
+  const client = getAnthropicClient();
+  if (!client) return null;
+
+  try {
+    const response = await client.messages.create({
+      model: DEFAULT_MODEL,
+      max_tokens: 2048,
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      tools: [EXTRACTION_TOOL_SCHEMA as unknown as Anthropic.Tool],
+      tool_choice: { type: "tool", name: "submit_triage" },
+      messages: [
+        { role: "user", content: buildUserPrompt(JSON.stringify(item, null, 2)) },
+      ],
+    });
+
+    for (const block of response.content) {
+      if (block.type === "tool_use" && block.name === "submit_triage") {
+        return block.input as ExtractionResult;
+      }
+    }
+    warn(`extractWithLLM: no tool_use block returned for ${item.id}`);
+    return null;
+  } catch (err) {
+    warn(
+      `extractWithLLM: failed for ${item.id}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return null;
+  }
+}
+
+export async function extract(item: InboxItem): Promise<ExtractionResult> {
+  const llm = await extractWithLLM(item);
+  if (llm) return llm;
+  return extractWithRules(item);
 }
