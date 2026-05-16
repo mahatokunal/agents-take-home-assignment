@@ -49,13 +49,13 @@ Semantic evaluation
   ✓ forbidden tools: none called
   ✓ escalation: absent as expected
   ✓ missing_info: mentions all expected categories
-✗ item_7 (4/7) — Ana Lopez voicemail, Spanish, Medicaid — Isabella, eval request
-  ✗ classification: got "other", expected "new_referral"
+✓ item_7 (7/7) — Ana Lopez voicemail, Spanish, Medicaid — Isabella, eval request
+  ✓ classification: got "new_referral", expected "new_referral"
   ✓ urgency: got "P2", expected one of [P2]
-  ✗ required tools: missing: verify_insurance, draft_message
+  ✓ required tools: all 3 present
   ✓ forbidden tools: none called
   ✓ escalation: absent as expected
-  ✗ draft language: expected any of [gracias, Gracias, Hola, hola, evaluaci] but draft has none
+  ✓ draft language: contains at least one of [gracias, Gracias, Hola...]
   ✓ draft safety: none of the forbidden phrases appear
 ✓ item_8 (6/6) — Anita Patel, email — same-day reschedule of Noah's 3pm OT
   ✓ classification: got "scheduling", expected "scheduling"
@@ -66,7 +66,7 @@ Semantic evaluation
   ✓ draft safety: none of the forbidden phrases appear
 
 Summary
-  items:  7/8 passed
-  checks: 47/50 passed
+  items:  8/8 passed
+  checks: 50/50 passed
 
-Semantic eval FAILED — 3 check(s) failed.
+Semantic eval passed.

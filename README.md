@@ -172,9 +172,22 @@ Exits non-zero on any failure. Captured stdout for both demo snapshots lives in 
 | Path | Items | Checks | Result |
 |---|---|---|---|
 | LLM (Anthropic Haiku) | **8/8** | **50/50** | ✓ passed |
-| Rules-only fallback | 7/8 | 47/50 | ✗ item_7 fails (Spanish/Medicaid voicemail → falls to `other`, no Spanish draft) |
+| Rules-only fallback | **8/8** | **50/50** | ✓ passed |
 
-The rules-path failure is **expected and informative** — it pinpoints the exact scenario where LLM judgment adds value over keyword heuristics. That's the production signal the eval exists to surface.
+#### Bug the eval caught, and the fix
+
+The very first run of the rules-only path scored **7/8 (47/50)**, failing item_7 (Ana Lopez voicemail — Spanish, asking for an SLP evaluation for her daughter Isabella, Medicaid). Root cause: the keyword regex in `src/triage/classify.ts` was English-only — `/\breferral\b/i` and `/\bevaluation\b/i` don't match `evaluación`, `referencia`, or `terapia`. The item fell through to the default `other` classification and the spam/other handler skipped `verify_insurance` and `draft_message` entirely. A Spanish-speaking family would have received an English boilerplate from the wrong handler — exactly the kind of silent miss the structural validator cannot see.
+
+Fix: factored language handling into `src/triage/language.ts` — a small module that owns
+
+- `detectLanguage(text)` — Spanish hint patterns moved here, easy to add more languages.
+- `matchAny(text, concept, lang)` — concept-keyed regex table per language; routing always OR-matches English plus the detected language (medical/insurance terms often stay English even inside a Spanish message).
+- `detectDisciplines(text, lang)` — same per-language pattern table for SLP/OT/PT (`habla` → SLP, `terapia ocupacional` → OT, etc.).
+- `localizedDraft(classification, lang, child)` — per-classification draft templates keyed by language.
+
+`classify.ts` now delegates to `language.ts` for all keyword/language work. Adding a third language (e.g. Vietnamese, the next-largest pediatric therapy demographic in many US metros) is a 30-line table addition with no changes to the routing or handler code. After the fix, the rules path scores **8/8, 50/50** — same as the LLM path on this batch.
+
+That's the loop the eval is built for: catch a real semantic regression that the validator can't see, point at the exact item and check that failed, drive a concrete fix.
 
 ### Demo viewer
 

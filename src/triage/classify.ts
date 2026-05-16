@@ -1,5 +1,11 @@
-import type { Discipline, InboxItem } from "../types.js";
+import type { InboxItem } from "../types.js";
 import type { ExtractionResult } from "../llm/extract.js";
+import {
+  detectDisciplines as detectDisciplinesMulti,
+  detectLanguage,
+  localizedDraft,
+  matchAny,
+} from "./language.js";
 
 const SAFEGUARDING_PATTERNS = [
   /\babuse\b/i,
@@ -12,22 +18,8 @@ const SAFEGUARDING_PATTERNS = [
   /\bunsafe\b/i,
   /\bafraid\b/i,
   /\bscared\b.*\b(dad|mom|father|mother|parent|home)\b/i,
-];
-
-const SAME_DAY_PATTERNS = [
-  /\btoday\b/i,
-  /\bthis (morning|afternoon|evening)\b/i,
-  /\bright now\b/i,
-];
-
-const SPANISH_HINTS = [
-  /\bhola\b/i,
-  /\bsoy\b/i,
-  /\bmi (hijo|hija)\b/i,
-  /\bespan(o|ñ)l\b/i,
-  /\bgracias\b/i,
-  /\bmensaje\b/i,
-  /\bevaluaci(o|ó)n\b/i,
+  /\bda(ñ|n)o\b/i,
+  /\bmaltrato\b/i,
 ];
 
 const KNOWN_PAYERS = [
@@ -52,17 +44,15 @@ export function extractWithRules(item: InboxItem): ExtractionResult {
   const subject = item.subject || "";
   const haystack = `${subject}\n${body}`;
 
-  const language: "en" | "es" = SPANISH_HINTS.some((p) => p.test(haystack))
-    ? "es"
-    : "en";
+  const language = detectLanguage(haystack);
 
   const isSafeguarding = SAFEGUARDING_PATTERNS.some((p) => p.test(haystack));
-  const isSameDay = SAME_DAY_PATTERNS.some((p) => p.test(haystack));
+  const isSameDay = matchAny(haystack, "sameDay", language);
 
   const child_name = extractChildName(body);
   const dob_or_age = extractDob(body) || extractAge(body);
   const parent_contact = extractParentContact(body);
-  const discipline = extractDisciplines(haystack);
+  const discipline = detectDisciplinesMulti(haystack, language);
   const diagnosis_or_concern = extractConcern(body);
   const payer = extractPayer(body);
   const member_id = extractMemberId(body);
@@ -88,14 +78,12 @@ export function extractWithRules(item: InboxItem): ExtractionResult {
   const hasBlankMarkers = /\[blank\]/i.test(body) || /\[\s*\]/.test(body);
   const looksLikeReferral =
     item.channel === "fax_referral" ||
-    /\breferral\b/i.test(haystack) ||
-    /\bevaluation\b/i.test(haystack);
+    matchAny(haystack, "referral", language);
   const isClinicalQuestion =
-    /\?/.test(body) &&
-    /(normal|should I|is it|advice|worried|wait until)/i.test(body);
+    /\?/.test(body) && matchAny(body, "clinicalQuestion", language);
   const isScheduling =
-    /(reschedule|cancel|appointment)/i.test(haystack) ||
-    (isSameDay && /(can't make|won't make|won't be able)/i.test(body));
+    matchAny(haystack, "scheduling", language) ||
+    (isSameDay && matchAny(body, "cancel", language));
 
   let classification: ExtractionResult["classification"] = "other";
   let urgency: ExtractionResult["urgency"] = "P2";
@@ -152,7 +140,7 @@ export function extractWithRules(item: InboxItem): ExtractionResult {
     extracted_intake: intake,
     missing_info,
     language,
-    draft_reply_text: defaultDraft(classification, language, child_name),
+    draft_reply_text: localizedDraft(classification, language, child_name),
     recommended_next_action,
     decision_rationale,
     escalation_reason,
@@ -200,17 +188,6 @@ function extractParentContact(body: string): string | null {
   return parts.length ? parts.join(", ") : null;
 }
 
-function extractDisciplines(haystack: string): Discipline[] | null {
-  const out: Discipline[] = [];
-  if (/\b(SLP|speech|articulation|stutter|language pathology)\b/i.test(haystack))
-    out.push("SLP");
-  if (/\b(OT|occupational|sensory|feeding|fine motor)\b/i.test(haystack))
-    out.push("OT");
-  if (/\b(PT|physical therapy|toe walking|tripping|gait|gross motor)\b/i.test(haystack))
-    out.push("PT");
-  return out.length ? Array.from(new Set(out)) : null;
-}
-
 function extractConcern(body: string): string | null {
   const patterns = [
     /Concern:\s*([^\n.]+)/i,
@@ -245,35 +222,3 @@ function extractMemberId(body: string): string | null {
   return inline ? inline[1] : null;
 }
 
-function defaultDraft(
-  classification: ExtractionResult["classification"],
-  language: "en" | "es",
-  childName: string | null,
-): string | null {
-  const child = childName || "your child";
-  if (classification === "safeguarding") {
-    return language === "es"
-      ? `Gracias por comunicarse con Cedar Kids Therapy sobre ${child}. Hemos recibido su mensaje y un miembro de nuestro equipo clínico se comunicará con usted directamente.`
-      : `Thank you for reaching out to Cedar Kids Therapy about ${child}. We have received your message and a member of our clinical team will follow up with you directly.`;
-  }
-  if (classification === "scheduling") {
-    return language === "es"
-      ? `Gracias por avisarnos. Un miembro del equipo se comunicará pronto para confirmar el cambio en la cita de ${child}.`
-      : `Thanks for letting us know. A team member will follow up shortly to confirm the change to ${child}'s appointment.`;
-  }
-  if (classification === "clinical_question") {
-    return language === "es"
-      ? `Gracias por su pregunta sobre ${child}. No podemos ofrecer consejo clínico por mensaje; podemos programar una evaluación o revisión con un terapeuta. Un miembro del equipo le contactará.`
-      : `Thanks for your question about ${child}. We can't provide clinical advice by message, but we can set up a screening or evaluation with one of our therapists. A team member will follow up to schedule.`;
-  }
-  if (classification === "missing_paperwork") {
-    return `Thanks for sending this referral. Some required fields are missing, so we'll be in touch to gather the rest before scheduling.`;
-  }
-  if (classification === "new_referral") {
-    return language === "es"
-      ? `Gracias por enviar la referencia de ${child}. Un miembro del equipo de admisión se comunicará para confirmar el seguro y revisar las opciones de horario.`
-      : `Thanks for sending ${child}'s referral. A member of our intake team will follow up to verify insurance and review scheduling options.`;
-  }
-  if (classification === "spam") return null;
-  return `Thanks for your message. A team member will review and follow up shortly.`;
-}
