@@ -16,13 +16,18 @@ function loadRun(name) {
     .filter(Boolean)
     .map((line) => JSON.parse(line));
   const validate = readFileSync(resolve(here, name, "validate.txt"), "utf8");
-  return { output, trace, validate };
+  const evalText = readFileSync(resolve(here, name, "eval.txt"), "utf8");
+  return { output, trace, validate, evalText };
 }
+
+const expectations = JSON.parse(
+  readFileSync(resolve(root, "eval/expectations.json"), "utf8"),
+);
 
 const llm = loadRun("llm");
 const rules = loadRun("rules");
 
-const data = { inbox, runs: { llm, rules } };
+const data = { inbox, runs: { llm, rules }, expectations };
 const json = JSON.stringify(data).replace(/<\/script/gi, "<\\/script");
 
 const html = `<!doctype html>
@@ -124,6 +129,21 @@ const html = `<!doctype html>
   .v-raw { margin-top: 12px; background: #000; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; font-family: ui-monospace, SF Mono, monospace; font-size: 12px; color: #b8e6c8; white-space: pre-wrap; line-height: 1.55; }
   .v-raw .v-raw-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-size: 10.5px; margin-bottom: 4px; }
   .v-disclaimer { margin-top: 8px; color: var(--muted); font-size: 11.5px; font-style: italic; }
+  .evalpanel { background: var(--panel); border-bottom: 1px solid var(--border); padding: 14px 20px; }
+  .e-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
+  .e-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+  .e-item { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+  .e-item.ok { border-left: 3px solid var(--green); }
+  .e-item.bad { border-left: 3px solid var(--p0); }
+  .e-item .id-row { display: flex; justify-content: space-between; align-items: center; }
+  .e-item .id { font-family: ui-monospace, SF Mono, monospace; font-weight: 600; }
+  .e-item .score { font-size: 11.5px; color: var(--muted); }
+  .e-item .checks { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .e-check { font-size: 10.5px; padding: 2px 6px; border-radius: 3px; font-family: ui-monospace, SF Mono, monospace; }
+  .e-check.ok { background: rgba(109, 216, 151, 0.15); color: var(--green); }
+  .e-check.bad { background: rgba(255, 92, 106, 0.2); color: var(--p0); }
+  .e-item .fail-detail { margin-top: 6px; font-size: 11.5px; color: var(--p0); border-top: 1px dashed var(--border); padding-top: 6px; }
+  .e-item .fail-detail .lbl { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -141,6 +161,8 @@ const html = `<!doctype html>
 <div class="summary" id="summary"></div>
 
 <div class="validator" id="validator"></div>
+
+<div class="evalpanel" id="evalpanel"></div>
 
 <main>
   <aside>
@@ -223,6 +245,95 @@ const html = `<!doctype html>
       traceCount: nonExemptTrace.length,
       reportedCount: reportedIds.size,
     };
+  }
+
+  function computeEval() {
+    const out = getRun().output;
+    const outById = new Map(out.items.map((i) => [i.item_id, i]));
+    const results = [];
+    for (const expect of data.expectations.items) {
+      const item = outById.get(expect.item_id);
+      if (!item) {
+        results.push({ itemId: expect.item_id, summary: expect.summary, passed: false, checks: [{ name: 'presence', passed: false, detail: 'no matching item in output' }] });
+        continue;
+      }
+      const calledTools = new Set(item.tools_called.map((c) => c.name));
+      const draft = (item.draft_reply || '').toLowerCase();
+      const checks = [];
+
+      checks.push({ name: 'classification', passed: item.classification === expect.classification, detail: \`got "\${item.classification}", expected "\${expect.classification}"\` });
+      checks.push({ name: 'urgency', passed: expect.urgency_in.includes(item.urgency), detail: \`got "\${item.urgency}", expected [\${expect.urgency_in.join(', ')}]\` });
+
+      if (expect.required_tools && expect.required_tools.length) {
+        const missing = expect.required_tools.filter((t) => !calledTools.has(t));
+        checks.push({ name: 'required tools', passed: missing.length === 0, detail: missing.length === 0 ? \`all \${expect.required_tools.length} present\` : \`missing: \${missing.join(', ')}\` });
+      }
+      if (expect.forbidden_tools && expect.forbidden_tools.length) {
+        const found = expect.forbidden_tools.filter((t) => calledTools.has(t));
+        checks.push({ name: 'forbidden tools', passed: found.length === 0, detail: found.length === 0 ? 'none called' : \`called: \${found.join(', ')}\` });
+      }
+      if (expect.escalation_required !== undefined) {
+        const has = item.escalation !== null;
+        checks.push({ name: 'escalation', passed: has === expect.escalation_required, detail: expect.escalation_required ? (has ? \`present (\${item.escalation.severity})\` : 'missing') : (has ? 'unexpected' : 'absent as expected') });
+      }
+      if (expect.missing_info_must_include_any_of) {
+        const lowered = item.missing_info.map((m) => m.toLowerCase());
+        const unmatched = [];
+        for (const group of expect.missing_info_must_include_any_of) {
+          if (!group.some((needle) => lowered.some((m) => m.includes(needle.toLowerCase())))) unmatched.push(\`[\${group.join('|')}]\`);
+        }
+        checks.push({ name: 'missing_info', passed: unmatched.length === 0, detail: unmatched.length === 0 ? 'mentions all categories' : \`missing: \${unmatched.join(', ')}\` });
+      }
+      if (expect.missing_info_must_be_empty_or_minor) {
+        checks.push({ name: 'missing_info minimality', passed: item.missing_info.length <= 2, detail: \`\${item.missing_info.length} entries (≤2 allowed)\` });
+      }
+      if (expect.draft_must_contain_any_of && expect.draft_must_contain_any_of.length) {
+        const matched = expect.draft_must_contain_any_of.some((s) => draft.includes(s.toLowerCase()));
+        checks.push({ name: 'draft language', passed: matched, detail: matched ? 'matches expected language' : \`expected one of [\${expect.draft_must_contain_any_of.join(', ')}]\` });
+      }
+      if (expect.draft_must_not_contain && expect.draft_must_not_contain.length) {
+        const hits = expect.draft_must_not_contain.filter((needle) => draft.includes(needle.toLowerCase()));
+        checks.push({ name: 'draft safety', passed: hits.length === 0, detail: hits.length === 0 ? 'no forbidden phrases' : \`contains: \${hits.join(', ')}\` });
+      }
+
+      results.push({ itemId: expect.item_id, summary: expect.summary, passed: checks.every((c) => c.passed), checks });
+    }
+    const totalChecks = results.reduce((a, r) => a + r.checks.length, 0);
+    const passedChecks = results.reduce((a, r) => a + r.checks.filter((c) => c.passed).length, 0);
+    const passedItems = results.filter((r) => r.passed).length;
+    return { results, totalChecks, passedChecks, passedItems, allPassed: passedItems === results.length };
+  }
+
+  function renderEval() {
+    const e = computeEval();
+    const cardsHtml = e.results.map((r) => {
+      const checksHtml = r.checks.map((c) => \`<span class="e-check \${c.ok = c.passed ? 'ok' : 'bad'}">\${c.passed ? '✓' : '✗'} \${c.name}</span>\`).join('');
+      const failDetails = r.checks.filter((c) => !c.passed).map((c) => \`<div><span class="lbl">\${escapeHtml(c.name)}:</span> \${escapeHtml(c.detail)}</div>\`).join('');
+      return \`
+        <div class="e-item \${r.passed ? 'ok' : 'bad'}" title="\${escapeHtml(r.summary)}">
+          <div class="id-row">
+            <span class="id">\${r.itemId}</span>
+            <span class="score">\${r.checks.filter((c) => c.passed).length}/\${r.checks.length}</span>
+          </div>
+          <div class="checks">\${checksHtml}</div>
+          \${failDetails ? \`<div class="fail-detail">\${failDetails}</div>\` : ''}
+        </div>
+      \`;
+    }).join('');
+
+    document.getElementById('evalpanel').innerHTML = \`
+      <div class="e-head">
+        <span class="v-title">Semantic eval</span>
+        <span class="v-cmd">npm run eval</span>
+        <span class="v-badge \${e.allPassed ? 'pass' : 'fail'}">\${e.allPassed ? '✓ All items passed' : '✗ ' + (e.results.length - e.passedItems) + ' item(s) failed'}</span>
+        <span style="color:var(--muted);font-size:12.5px">\${e.passedItems}/\${e.results.length} items · \${e.passedChecks}/\${e.totalChecks} checks</span>
+      </div>
+      <div class="e-grid">\${cardsHtml}</div>
+      <div class="v-raw">
+        <div class="v-raw-label">Ground truth — captured stdout from <code>npm run eval</code> on this snapshot</div>\${escapeHtml(getRun().evalText.trim())}
+      </div>
+      <div class="v-disclaimer">Checks the agent's <em>semantic</em> decisions (classification, urgency, required/forbidden tools, draft safety, language detection) against golden expectations in <code>eval/expectations.json</code>. The structural validator above is necessary but not sufficient — this catches things like "did we correctly classify the safeguarding voicemail" that the validator can't see.</div>
+    \`;
   }
 
   function renderValidator() {
@@ -409,6 +520,7 @@ const html = `<!doctype html>
     document.getElementById('btn-llm').classList.toggle('active', name === 'llm');
     document.getElementById('btn-rules').classList.toggle('active', name === 'rules');
     renderValidator();
+    renderEval();
     renderSummary();
     renderList();
     renderDetail();

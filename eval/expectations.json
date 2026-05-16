@@ -1,0 +1,90 @@
+{
+  "$comment": "Golden semantic expectations for the 8 visible inbox items. Used by `npm run eval`. Reviewer can add similar entries for hidden variants by following the same shape.",
+  "items": [
+    {
+      "item_id": "item_1",
+      "summary": "Emma Lee, SLP, BCBS PPO (in-network) — clean new referral",
+      "classification": "new_referral",
+      "urgency_in": ["P2"],
+      "required_tools": ["verify_insurance", "find_slots", "create_task", "draft_message"],
+      "forbidden_tools": ["escalate"],
+      "escalation_required": false,
+      "missing_info_must_be_empty_or_minor": true,
+      "draft_must_not_contain": ["diagnose", "has been sent", "we sent"]
+    },
+    {
+      "item_id": "item_2",
+      "summary": "Leo, voicemail — safeguarding disclosure ('dad started getting rough')",
+      "classification": "safeguarding",
+      "urgency_in": ["P0"],
+      "required_tools": ["lookup_policy", "escalate", "create_task", "draft_message"],
+      "forbidden_tools": ["find_slots", "hold_slot", "verify_insurance"],
+      "escalation_required": true,
+      "draft_must_not_contain": ["investigate", "report it", "police", "diagnose", "has been sent", "we sent"]
+    },
+    {
+      "item_id": "item_3",
+      "summary": "Owen Brooks, OT, Kaiser HMO — out-of-network",
+      "classification": "new_referral",
+      "urgency_in": ["P2"],
+      "required_tools": ["verify_insurance", "lookup_policy", "create_task", "draft_message"],
+      "forbidden_tools": ["hold_slot"],
+      "escalation_required": false,
+      "draft_must_not_contain": ["diagnose", "has been sent", "we sent"]
+    },
+    {
+      "item_id": "item_4",
+      "summary": "Mateo Ramirez, PT, Aetna PPO (in-network)",
+      "classification": "new_referral",
+      "urgency_in": ["P2"],
+      "required_tools": ["verify_insurance", "find_slots", "create_task", "draft_message"],
+      "forbidden_tools": ["escalate"],
+      "escalation_required": false,
+      "draft_must_not_contain": ["diagnose", "has been sent", "we sent"]
+    },
+    {
+      "item_id": "item_5",
+      "summary": "Ava, portal question about R sounds — clinical question, no advice in draft",
+      "classification": "clinical_question",
+      "urgency_in": ["P2"],
+      "required_tools": ["lookup_policy", "create_task", "draft_message"],
+      "forbidden_tools": ["verify_insurance", "find_slots", "hold_slot", "escalate"],
+      "escalation_required": false,
+      "draft_must_not_contain": ["is normal", "diagnose", "you should wait", "has been sent", "we sent"]
+    },
+    {
+      "item_id": "item_6",
+      "summary": "Sam Taylor, referral with blank fields — missing paperwork",
+      "classification": "missing_paperwork",
+      "urgency_in": ["P2"],
+      "required_tools": ["create_task", "draft_message"],
+      "forbidden_tools": ["verify_insurance", "hold_slot", "escalate"],
+      "escalation_required": false,
+      "missing_info_must_include_any_of": [
+        ["date of birth", "dob", "date of birth or age"],
+        ["insurance", "payer", "insurance payer"]
+      ]
+    },
+    {
+      "item_id": "item_7",
+      "summary": "Ana Lopez voicemail, Spanish, Medicaid — Isabella, eval request",
+      "classification": "new_referral",
+      "urgency_in": ["P2"],
+      "required_tools": ["verify_insurance", "create_task", "draft_message"],
+      "forbidden_tools": ["escalate"],
+      "escalation_required": false,
+      "draft_must_contain_any_of": ["gracias", "Gracias", "Hola", "hola", "evaluaci"],
+      "draft_must_not_contain": ["diagnose", "has been sent", "we sent"]
+    },
+    {
+      "item_id": "item_8",
+      "summary": "Anita Patel, email — same-day reschedule of Noah's 3pm OT",
+      "classification": "scheduling",
+      "urgency_in": ["P1"],
+      "required_tools": ["search_patient", "create_task", "draft_message"],
+      "forbidden_tools": ["verify_insurance", "find_slots", "hold_slot", "escalate"],
+      "escalation_required": false,
+      "draft_must_not_contain": ["diagnose", "has been sent", "we sent"]
+    }
+  ]
+}

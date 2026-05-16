@@ -1,0 +1,72 @@
+
+> agents-take-home-assignment@1.0.0 eval
+> tsx --env-file-if-exists=.env eval/run.ts --output demo/llm/output.json
+
+Semantic evaluation
+  output:       demo/llm/output.json
+  expectations: eval/expectations.json
+
+✓ item_1 (7/7) — Emma Lee, SLP, BCBS PPO (in-network) — clean new referral
+  ✓ classification: got "new_referral", expected "new_referral"
+  ✓ urgency: got "P2", expected one of [P2]
+  ✓ required tools: all 4 present
+  ✓ forbidden tools: none called
+  ✓ escalation: absent as expected
+  ✓ missing_info minimality: 0 entries (allowed ≤2 for clean intake)
+  ✓ draft safety: none of the forbidden phrases appear
+✓ item_2 (6/6) — Leo, voicemail — safeguarding disclosure ('dad started getting rough')
+  ✓ classification: got "safeguarding", expected "safeguarding"
+  ✓ urgency: got "P0", expected one of [P0]
+  ✓ required tools: all 4 present
+  ✓ forbidden tools: none called
+  ✓ escalation: present (severity P0)
+  ✓ draft safety: none of the forbidden phrases appear
+✓ item_3 (6/6) — Owen Brooks, OT, Kaiser HMO — out-of-network
+  ✓ classification: got "new_referral", expected "new_referral"
+  ✓ urgency: got "P2", expected one of [P2]
+  ✓ required tools: all 4 present
+  ✓ forbidden tools: none called
+  ✓ escalation: absent as expected
+  ✓ draft safety: none of the forbidden phrases appear
+✓ item_4 (6/6) — Mateo Ramirez, PT, Aetna PPO (in-network)
+  ✓ classification: got "new_referral", expected "new_referral"
+  ✓ urgency: got "P2", expected one of [P2]
+  ✓ required tools: all 4 present
+  ✓ forbidden tools: none called
+  ✓ escalation: absent as expected
+  ✓ draft safety: none of the forbidden phrases appear
+✓ item_5 (6/6) — Ava, portal question about R sounds — clinical question, no advice in draft
+  ✓ classification: got "clinical_question", expected "clinical_question"
+  ✓ urgency: got "P2", expected one of [P2]
+  ✓ required tools: all 3 present
+  ✓ forbidden tools: none called
+  ✓ escalation: absent as expected
+  ✓ draft safety: none of the forbidden phrases appear
+✓ item_6 (6/6) — Sam Taylor, referral with blank fields — missing paperwork
+  ✓ classification: got "missing_paperwork", expected "missing_paperwork"
+  ✓ urgency: got "P2", expected one of [P2]
+  ✓ required tools: all 2 present
+  ✓ forbidden tools: none called
+  ✓ escalation: absent as expected
+  ✓ missing_info: mentions all expected categories
+✓ item_7 (7/7) — Ana Lopez voicemail, Spanish, Medicaid — Isabella, eval request
+  ✓ classification: got "new_referral", expected "new_referral"
+  ✓ urgency: got "P2", expected one of [P2]
+  ✓ required tools: all 3 present
+  ✓ forbidden tools: none called
+  ✓ escalation: absent as expected
+  ✓ draft language: contains at least one of [gracias, Gracias, Hola...]
+  ✓ draft safety: none of the forbidden phrases appear
+✓ item_8 (6/6) — Anita Patel, email — same-day reschedule of Noah's 3pm OT
+  ✓ classification: got "scheduling", expected "scheduling"
+  ✓ urgency: got "P1", expected one of [P1]
+  ✓ required tools: all 3 present
+  ✓ forbidden tools: none called
+  ✓ escalation: absent as expected
+  ✓ draft safety: none of the forbidden phrases appear
+
+Summary
+  items:  8/8 passed
+  checks: 50/50 passed
+
+Semantic eval passed.

@@ -145,11 +145,38 @@ Trace and output stay 1:1 by construction: every call goes through `withItemCont
 
 Current state on both runs (LLM path and rules-only fallback): **all seven checks pass.** Snapshot stdout is captured in `demo/llm/validate.txt` and `demo/rules/validate.txt`.
 
-### Eval limitations
+### Semantic eval (`npm run eval`)
 
-The validator is structural, not semantic. It will not tell you that item_2 was *correctly* classified as `safeguarding`, that item_3 (Kaiser) *correctly* skipped `hold_slot`, or that the draft for item_5 contained no clinical advice. Those judgments are still manual — see `demo/index.html` for a per-item walkthrough that surfaces them.
+The validator is structural; the eval is semantic. `eval/run.ts` checks the agent's *decisions* against golden expectations in `eval/expectations.json` — per-item:
 
-A semantic regression suite (golden classification + required-tool-sequence per visible item, plus an LLM-judge harness for draft quality) is listed in [What I would do with another 4 hours](#what-i-would-do-with-another-4-hours).
+- expected `classification` (e.g. item_2 → `safeguarding`, item_8 → `scheduling`)
+- expected `urgency` (e.g. item_2 → `P0`, item_8 → `P1`, everything else → `P2`)
+- **required** tool names (e.g. item_3 must call `verify_insurance` and `lookup_policy`)
+- **forbidden** tool names (e.g. item_3 must NOT call `hold_slot` because Kaiser is OON)
+- escalation object required / forbidden
+- `missing_info` content (item_6 must mention DOB and insurance)
+- draft-reply substring assertions — both positive (item_7 must contain Spanish words) and negative (no draft may contain "diagnose", "has been sent", "is normal", etc.)
+
+Run:
+
+```bash
+npm run eval                                            # against output.json
+npm run eval -- --output demo/llm/output.json           # against the LLM snapshot
+npm run eval -- --output demo/rules/output.json         # against the rules-only snapshot
+```
+
+Exits non-zero on any failure. Captured stdout for both demo snapshots lives in `demo/llm/eval.txt` and `demo/rules/eval.txt`.
+
+**Current results:**
+
+| Path | Items | Checks | Result |
+|---|---|---|---|
+| LLM (Anthropic Haiku) | **8/8** | **50/50** | ✓ passed |
+| Rules-only fallback | 7/8 | 47/50 | ✗ item_7 fails (Spanish/Medicaid voicemail → falls to `other`, no Spanish draft) |
+
+The rules-path failure is **expected and informative** — it pinpoints the exact scenario where LLM judgment adds value over keyword heuristics. That's the production signal the eval exists to surface.
+
+### Demo viewer
 
 ### Demo viewer
 
@@ -183,8 +210,8 @@ Regenerate after a fresh triage run with `node demo/generate.mjs`.
 
 ## What I would do with another 4 hours
 
-- A golden-file regression suite per handler covering tool sequence, args, and draft tone — separate from the validator.
-- An LLM-judge eval harness scoring draft replies on (a) no clinical advice, (b) no implied send, (c) empathy, (d) operational specificity.
+- ✅ ~~A golden-file regression suite per handler covering tool sequence, args, and draft tone — separate from the validator.~~ (shipped as `npm run eval` — see Validation section)
+- An LLM-judge eval harness scoring draft replies on (a) no clinical advice, (b) no implied send, (c) empathy, (d) operational specificity — extending the existing substring assertions in `eval/expectations.json` from boolean to a graded score.
 - A second, smaller safety classifier run in parallel for safeguarding, with the union escalated.
 - Move the rules-only path behind a feature flag and add a soak test that runs both paths nightly against synthetic variants.
 - Richer Spanish drafts informed by language_access policy, not just direct translation.
