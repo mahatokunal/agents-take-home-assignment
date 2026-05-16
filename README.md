@@ -89,3 +89,70 @@ Similar synthetic variants may be run during review. We will not tell you what t
 - README and production thinking: 15%
 
 Draft replies should be clear, empathetic, concise, and operationally useful. They must not provide clinical advice or imply messages were sent.
+
+---
+
+## How to run
+
+```bash
+npm install
+# optional: set ANTHROPIC_API_KEY for higher-quality extraction; without it
+# the agent falls back to a rules-only path that still passes validation.
+export ANTHROPIC_API_KEY=sk-ant-...
+
+npm run triage   -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
+npm run validate -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
+```
+
+Both commands also work with no flags (defaults match the paths above).
+
+## Stack and runtime
+
+- Node LTS, TypeScript, `tsx`, npm.
+- `@anthropic-ai/sdk` with model alias `claude-haiku-4-5` (override via `ANTHROPIC_MODEL`).
+- `ajv` + `ajv-formats` for output validation (already in the starter).
+- Logging is plain `process.stderr` writes gated by `DEBUG=1`.
+
+## Architecture
+
+Hybrid pipeline. For each `InboxItem` (processed in parallel under `withItemContext`):
+
+1. **Extract** — `src/llm/extract.ts` makes a single Anthropic call with `tool_choice: { type: "tool", name: "submit_triage" }`. The forced tool-use returns a strictly-typed `ExtractionResult` (classification, urgency, intake fields, draft text, language, decision rationale). If `ANTHROPIC_API_KEY` is unset or the call fails, `src/triage/classify.ts` (regex + keyword rules) produces the same shape so the batch still completes.
+2. **Route** — `src/triage/router.ts` dispatches by classification to one of ten handlers in `src/triage/handlers/`. Each handler decides which tools from `src/tools.ts` to call:
+   - `safeguarding`: `lookup_policy` → `escalate(P0)` → `create_task(clinical_lead)` → `draft_message` (neutral acknowledgement).
+   - `scheduling`: `search_patient` → `create_task(front_desk)` → `draft_message`.
+   - `new_referral`: `verify_insurance` → branch on result. In-network: `find_slots` → `hold_slot` (only when a slot exists and the discipline is known) → `create_task(intake)` → `draft_message`. Out-of-network / expired: `lookup_policy(insurance)` → `create_task(billing)` → `draft_message` (no slot hold). Unknown payer: `create_task(intake)` to gather info, no hold.
+   - `clinical_question`: `lookup_policy(clinical_advice)` → `create_task(intake)` → `draft_message` (no clinical advice).
+   - `missing_paperwork`: `create_task(intake)` → `draft_message` listing missing fields.
+   - `existing_patient_request`, `provider_followup`, `complaint`, `billing_question`, `spam`/`other`: minimal handlers (task + optional draft).
+3. **Assemble** — `src/triage/buildItemOutput.ts` calls `getToolCallsForItem(item.id)` and produces the final `ItemOutput`. Urgency is reconciled deterministically: safeguarding always P0, scheduling with a same-day signal always P1, LLM-proposed P0/P1 without a matching classification is clamped down to P2.
+
+Trace and output stay 1:1 by construction: every call goes through `withItemContext`, no entry is mutated, and no `audit_exempt` calls are made.
+
+## Failure modes and production eval
+
+- **LLM hallucinating intake** — mitigated by structured output (forced tool use with a strict JSON schema) and by treating intake as `null` when the schema validator on Anthropic's side would reject. In production I would also diff `extracted_intake` against OCR of the referral attachment.
+- **LLM over-escalation** — mitigated by `reconcileUrgency`: any P1 that isn't from an allowed classification is clamped to P2. In production I'd add a regression set of items reviewers have already labelled and alert on drift.
+- **Missed safeguarding** — biggest tail risk. Currently caught by both an LLM signal and a regex set in the rules fallback. In production, run a second smaller safety classifier in parallel and OR the results; never AND.
+- **Trace divergence** — impossible in this design (we never mutate trace entries, never bypass `withItemContext`, never use `audit_exempt`). In production I'd assert this in CI by re-running the validator on every PR with a frozen synthetic inbox.
+- **Hidden-variant brittleness** — routing keys off classification, not item-specific patterns, so new variants should still route correctly. Items that fall through to `other` get a low-effort front-desk task rather than no output at all.
+- **Cost / latency** — currently 8 parallel Haiku calls per batch; sub-30s and pennies per run. In production I'd add prompt caching on the system prompt (already enabled here via `cache_control: ephemeral`) and add a per-day spend cap.
+
+## What I chose not to build, and why
+
+- **Unit tests.** The validator is an end-to-end test and the time budget is tight. In production each handler would have golden-file tests covering its tool sequence.
+- **LLM retries / backoff.** A failed extraction falls through to the rules path, which is good enough to produce valid output. Retries would add latency without changing the eventual fallback.
+- **Multi-turn LLM tool calling.** The routing decisions are deterministic; pushing tool selection into the LLM would weaken auditability without improving the rubric outcome.
+- **Streaming, structured logging, metrics.** Out of scope for a single-batch CLI.
+- **Provider preference ranking.** `find_slots` already filters by language and discipline; richer ranking (caseload mix, parent preferences) is a follow-up.
+- **OCR of referral PDFs.** The attachments listed in `inbox.json` are filenames only; no content is provided, so simulating OCR would just be guessing.
+
+## What I would do with another 4 hours
+
+- A golden-file regression suite per handler covering tool sequence, args, and draft tone — separate from the validator.
+- An LLM-judge eval harness scoring draft replies on (a) no clinical advice, (b) no implied send, (c) empathy, (d) operational specificity.
+- A second, smaller safety classifier run in parallel for safeguarding, with the union escalated.
+- Move the rules-only path behind a feature flag and add a soak test that runs both paths nightly against synthetic variants.
+- Richer Spanish drafts informed by language_access policy, not just direct translation.
+- Provider-preference scoring layered on `find_slots` (caseload status, age range, prior visit history).
+- Structured JSONL logging at item granularity to feed a triage dashboard.
