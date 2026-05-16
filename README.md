@@ -191,8 +191,6 @@ That's the loop the eval is built for: catch a real semantic regression that the
 
 ### Demo viewer
 
-### Demo viewer
-
 **Live:** https://agents-take-home-assignment.vercel.app — deployed from `main` on every push.
 
 `demo/index.html` is a self-contained page (open it directly via `file://`, no server required) showing:
@@ -216,19 +214,29 @@ Regenerate after a fresh triage run with `node demo/generate.mjs`.
 
 ## What I chose not to build, and why
 
-- **Unit tests.** The validator is an end-to-end test and the time budget is tight. In production each handler would have golden-file tests covering its tool sequence.
-- **LLM retries / backoff.** A failed extraction falls through to the rules path, which is good enough to produce valid output. Retries would add latency without changing the eventual fallback.
+- **Unit tests on individual handlers.** The validator (`npm run validate`) is the structural end-to-end test; the semantic eval (`npm run eval`, see above) is the regression suite. Together they cover the rubric without per-function unit tests.
+- **LLM retries / backoff.** A failed extraction falls through to the rules path, which now scores 8/8 on the eval — retries would add latency without changing the eventual fallback.
 - **Multi-turn LLM tool calling.** The routing decisions are deterministic; pushing tool selection into the LLM would weaken auditability without improving the rubric outcome.
-- **Streaming, structured logging, metrics.** Out of scope for a single-batch CLI.
-- **Provider preference ranking.** `find_slots` already filters by language and discipline; richer ranking (caseload mix, parent preferences) is a follow-up.
+- **Streaming, structured logging, metrics.** Out of scope for a single-batch CLI. (The demo HTML serves as a poor-man's dashboard for now.)
+- **Provider preference ranking.** `find_slots` already filters by language and discipline; richer ranking (caseload mix, prior visit history) is a follow-up.
 - **OCR of referral PDFs.** The attachments listed in `inbox.json` are filenames only; no content is provided, so simulating OCR would just be guessing.
 
-## What I would do with another 4 hours
+## What I shipped beyond the MVP floor
 
-- ✅ ~~A golden-file regression suite per handler covering tool sequence, args, and draft tone — separate from the validator.~~ (shipped as `npm run eval` — see Validation section)
-- An LLM-judge eval harness scoring draft replies on (a) no clinical advice, (b) no implied send, (c) empathy, (d) operational specificity — extending the existing substring assertions in `eval/expectations.json` from boolean to a graded score.
-- A second, smaller safety classifier run in parallel for safeguarding, with the union escalated.
-- Move the rules-only path behind a feature flag and add a soak test that runs both paths nightly against synthetic variants.
-- Richer Spanish drafts informed by language_access policy, not just direct translation.
-- Provider-preference scoring layered on `find_slots` (caseload status, age range, prior visit history).
-- Structured JSONL logging at item granularity to feed a triage dashboard.
+The README originally listed many of these in the "What I would do with another 4 hours" bucket. Time permitted, so:
+
+- ✅ **Semantic eval suite** (`eval/expectations.json` + `eval/run.ts` + `npm run eval`) — golden classification, urgency, required/forbidden tools, escalation, draft substring assertions per item. See [Semantic eval](#semantic-eval-npm-run-eval).
+- ✅ **Multilingual rules fallback** (`src/triage/language.ts`) — language detection + per-language keyword routing + localized draft templates. Bumped the rules path from 7/8 to 8/8 on the eval. Adding a third language is a table addition.
+- ✅ **Self-contained demo HTML viewer** (`demo/index.html`) — case-file layout, collapsible validator + eval panels with verbatim stdout, LLM ↔ rules toggle, ledger-style tool calls. Editorial UI with custom typography (Newsreader / IBM Plex Sans / JetBrains Mono).
+- ✅ **Vercel deployment** — `vercel.json` at the repo root, GitHub-connected, auto-deploys preview URLs per branch + production from `main`. Live: https://agents-take-home-assignment.vercel.app
+- ✅ **Graceful degradation** — agent runs without `ANTHROPIC_API_KEY`, warns once, falls back to the rules extractor. Reviewers can clone and `npm run triage` without a key.
+
+## What I would still do with another 4 hours
+
+- **LLM-judge eval harness** — extend the boolean substring assertions in `eval/expectations.json` into a graded score (no clinical advice, no implied send, empathy, operational specificity) using a small second Anthropic call per draft. Cheap and high-signal.
+- **Second safety classifier in parallel** — run a smaller model on every item just for "safeguarding y/n", OR the result with the main classifier. Never AND. Highest-leverage tail-risk reduction.
+- **Per-handler regression fixtures** — for each handler, freeze a synthetic input → expected tool sequence → expected draft tone, so refactors don't silently shift behavior. Complements the per-item eval.
+- **Feature flag for the rules path + nightly soak** — run both paths against a rolling set of synthetic variants overnight, alert on any eval regression.
+- **Provider-preference scoring** — layer caseload status, age range, and prior visit history on top of `find_slots` to rank slots, not just filter.
+- **Structured JSONL logging at item granularity** — feed a real triage dashboard (not just the demo HTML).
+- **OCR layer for attachments** — once real PDFs flow in, diff `extracted_intake` against OCR'd referral text to catch LLM hallucination on intake fields.
