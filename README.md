@@ -89,3 +89,154 @@ Similar synthetic variants may be run during review. We will not tell you what t
 - README and production thinking: 15%
 
 Draft replies should be clear, empathetic, concise, and operationally useful. They must not provide clinical advice or imply messages were sent.
+
+---
+
+## How to run
+
+```bash
+npm install
+# optional: set ANTHROPIC_API_KEY for higher-quality extraction; without it
+# the agent falls back to a rules-only path that still passes validation.
+export ANTHROPIC_API_KEY=sk-ant-...
+
+npm run triage   -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
+npm run validate -- --input data/inbox.json --output output.json --trace .trace/tool-calls.jsonl
+```
+
+Both commands also work with no flags (defaults match the paths above).
+
+## Stack and runtime
+
+- Node LTS, TypeScript, `tsx`, npm.
+- `@anthropic-ai/sdk` with model alias `claude-haiku-4-5` (override via `ANTHROPIC_MODEL`).
+- `ajv` + `ajv-formats` for output validation (already in the starter).
+- Logging is plain `process.stderr` writes gated by `DEBUG=1`.
+
+## Architecture
+
+Hybrid pipeline. For each `InboxItem` (processed in parallel under `withItemContext`):
+
+1. **Extract** — `src/llm/extract.ts` makes a single Anthropic call with `tool_choice: { type: "tool", name: "submit_triage" }`. The forced tool-use returns a strictly-typed `ExtractionResult` (classification, urgency, intake fields, draft text, language, decision rationale). If `ANTHROPIC_API_KEY` is unset or the call fails, `src/triage/classify.ts` (regex + keyword rules) produces the same shape so the batch still completes.
+2. **Route** — `src/triage/router.ts` dispatches by classification to one of ten handlers in `src/triage/handlers/`. Each handler decides which tools from `src/tools.ts` to call:
+   - `safeguarding`: `lookup_policy` → `escalate(P0)` → `create_task(clinical_lead)` → `draft_message` (neutral acknowledgement).
+   - `scheduling`: `search_patient` → `create_task(front_desk)` → `draft_message`.
+   - `new_referral`: `verify_insurance` → branch on result. In-network: `find_slots` → `hold_slot` (only when a slot exists and the discipline is known) → `create_task(intake)` → `draft_message`. Out-of-network / expired: `lookup_policy(insurance)` → `create_task(billing)` → `draft_message` (no slot hold). Unknown payer: `create_task(intake)` to gather info, no hold.
+   - `clinical_question`: `lookup_policy(clinical_advice)` → `create_task(intake)` → `draft_message` (no clinical advice).
+   - `missing_paperwork`: `create_task(intake)` → `draft_message` listing missing fields.
+   - `existing_patient_request`, `provider_followup`, `complaint`, `billing_question`, `spam`/`other`: minimal handlers (task + optional draft).
+3. **Assemble** — `src/triage/buildItemOutput.ts` calls `getToolCallsForItem(item.id)` and produces the final `ItemOutput`. Urgency is reconciled deterministically: safeguarding always P0, scheduling with a same-day signal always P1, LLM-proposed P0/P1 without a matching classification is clamped down to P2.
+
+Trace and output stay 1:1 by construction: every call goes through `withItemContext`, no entry is mutated, and no `audit_exempt` calls are made.
+
+## Validation
+
+`npm run validate` runs the structural validator in `src/validate.ts` against the produced `output.json` and `.trace/tool-calls.jsonl`. It is a hard gate, not an advisory check — non-zero exit on any failure. The seven checks:
+
+| Check | What it enforces |
+|---|---|
+| JSON schema | Output conforms to `schema/output.schema.json` (AJV, strict). |
+| Item coverage | Every input `id` has exactly one output; no unknown ids, no duplicates. |
+| Summary counts | `summary.total_items`, `p0_count`, `p1_count`, `requires_human_review_count` are recomputed from `items[]` and must match. |
+| Human review | `requires_human_review === true` for every item. |
+| Tool diversity | At least 3 distinct tool names across the batch. |
+| No forbidden tools | `schedule_appointment` and `send_message` never appear (output or trace). |
+| Trace ↔ output 1:1 | Every non-`audit_exempt` trace call appears in exactly one item's `tools_called` with identical `name`, canonicalized `args`, and `result_summary`. No orphan trace calls, no fabricated `call_id`s. |
+
+Current state on both runs (LLM path and rules-only fallback): **all seven checks pass.** Snapshot stdout is captured in `demo/llm/validate.txt` and `demo/rules/validate.txt`.
+
+### Semantic eval (`npm run eval`)
+
+The validator is structural; the eval is semantic. `eval/run.ts` checks the agent's *decisions* against golden expectations in `eval/expectations.json` — per-item:
+
+- expected `classification` (e.g. item_2 → `safeguarding`, item_8 → `scheduling`)
+- expected `urgency` (e.g. item_2 → `P0`, item_8 → `P1`, everything else → `P2`)
+- **required** tool names (e.g. item_3 must call `verify_insurance` and `lookup_policy`)
+- **forbidden** tool names (e.g. item_3 must NOT call `hold_slot` because Kaiser is OON)
+- escalation object required / forbidden
+- `missing_info` content (item_6 must mention DOB and insurance)
+- draft-reply substring assertions — both positive (item_7 must contain Spanish words) and negative (no draft may contain "diagnose", "has been sent", "is normal", etc.)
+
+Run:
+
+```bash
+npm run eval                                            # against output.json
+npm run eval -- --output demo/llm/output.json           # against the LLM snapshot
+npm run eval -- --output demo/rules/output.json         # against the rules-only snapshot
+```
+
+Exits non-zero on any failure. Captured stdout for both demo snapshots lives in `demo/llm/eval.txt` and `demo/rules/eval.txt`.
+
+**Current results:**
+
+| Path | Items | Checks | Result |
+|---|---|---|---|
+| LLM (Anthropic Haiku) | **8/8** | **50/50** | ✓ passed |
+| Rules-only fallback | **8/8** | **50/50** | ✓ passed |
+
+#### Bug the eval caught, and the fix
+
+The very first run of the rules-only path scored **7/8 (47/50)**, failing item_7 (Ana Lopez voicemail — Spanish, asking for an SLP evaluation for her daughter Isabella, Medicaid). Root cause: the keyword regex in `src/triage/classify.ts` was English-only — `/\breferral\b/i` and `/\bevaluation\b/i` don't match `evaluación`, `referencia`, or `terapia`. The item fell through to the default `other` classification and the spam/other handler skipped `verify_insurance` and `draft_message` entirely. A Spanish-speaking family would have received an English boilerplate from the wrong handler — exactly the kind of silent miss the structural validator cannot see.
+
+Fix: factored language handling into `src/triage/language.ts` — a small module that owns
+
+- `detectLanguage(text)` — Spanish hint patterns moved here, easy to add more languages.
+- `matchAny(text, concept, lang)` — concept-keyed regex table per language; routing always OR-matches English plus the detected language (medical/insurance terms often stay English even inside a Spanish message).
+- `detectDisciplines(text, lang)` — same per-language pattern table for SLP/OT/PT (`habla` → SLP, `terapia ocupacional` → OT, etc.).
+- `localizedDraft(classification, lang, child)` — per-classification draft templates keyed by language.
+
+`classify.ts` now delegates to `language.ts` for all keyword/language work. Adding a third language (e.g. Vietnamese, the next-largest pediatric therapy demographic in many US metros) is a 30-line table addition with no changes to the routing or handler code. After the fix, the rules path scores **8/8, 50/50** — same as the LLM path on this batch.
+
+That's the loop the eval is built for: catch a real semantic regression that the validator can't see, point at the exact item and check that failed, drive a concrete fix.
+
+### Demo viewer
+
+**Live:** https://agents-take-home-assignment.vercel.app — deployed from `main` on every push.
+
+`demo/index.html` is a self-contained page (open it directly via `file://`, no server required) showing:
+
+- The 8 input inbox items (sender, channel, body, attachments).
+- The agent's decision per item — classification, urgency, rationale, missing info, draft reply, escalation.
+- Every tool call in order with its args (pretty JSON) and `result_summary`.
+- A live re-implementation of all 7 validator checks plus the **verbatim stdout** of the real `npm run validate` run captured against the embedded snapshots.
+- A toggle between the LLM path and the rules-only fallback so you can see how the agent degrades when `ANTHROPIC_API_KEY` is unset.
+
+Regenerate after a fresh triage run with `node demo/generate.mjs`.
+
+## Failure modes and production eval
+
+- **LLM hallucinating intake** — mitigated by structured output (forced tool use with a strict JSON schema) and by treating intake as `null` when the schema validator on Anthropic's side would reject. In production I would also diff `extracted_intake` against OCR of the referral attachment.
+- **LLM over-escalation** — mitigated by `reconcileUrgency`: any P1 that isn't from an allowed classification is clamped to P2. In production I'd add a regression set of items reviewers have already labelled and alert on drift.
+- **Missed safeguarding** — biggest tail risk. Currently caught by both an LLM signal and a regex set in the rules fallback. In production, run a second smaller safety classifier in parallel and OR the results; never AND.
+- **Trace divergence** — impossible in this design (we never mutate trace entries, never bypass `withItemContext`, never use `audit_exempt`). In production I'd assert this in CI by re-running the validator on every PR with a frozen synthetic inbox.
+- **Hidden-variant brittleness** — routing keys off classification, not item-specific patterns, so new variants should still route correctly. Items that fall through to `other` get a low-effort front-desk task rather than no output at all.
+- **Cost / latency** — currently 8 parallel Haiku calls per batch; sub-30s and pennies per run. In production I'd add prompt caching on the system prompt (already enabled here via `cache_control: ephemeral`) and add a per-day spend cap.
+
+## What I chose not to build, and why
+
+- **Unit tests on individual handlers.** The validator (`npm run validate`) is the structural end-to-end test; the semantic eval (`npm run eval`, see above) is the regression suite. Together they cover the rubric without per-function unit tests.
+- **LLM retries / backoff.** A failed extraction falls through to the rules path, which now scores 8/8 on the eval — retries would add latency without changing the eventual fallback.
+- **Multi-turn LLM tool calling.** The routing decisions are deterministic; pushing tool selection into the LLM would weaken auditability without improving the rubric outcome.
+- **Streaming, structured logging, metrics.** Out of scope for a single-batch CLI. (The demo HTML serves as a poor-man's dashboard for now.)
+- **Provider preference ranking.** `find_slots` already filters by language and discipline; richer ranking (caseload mix, prior visit history) is a follow-up.
+- **OCR of referral PDFs.** The attachments listed in `inbox.json` are filenames only; no content is provided, so simulating OCR would just be guessing.
+
+## What I shipped beyond the MVP floor
+
+The README originally listed many of these in the "What I would do with another 4 hours" bucket. Time permitted, so:
+
+- ✅ **Semantic eval suite** (`eval/expectations.json` + `eval/run.ts` + `npm run eval`) — golden classification, urgency, required/forbidden tools, escalation, draft substring assertions per item. See [Semantic eval](#semantic-eval-npm-run-eval).
+- ✅ **Multilingual rules fallback** (`src/triage/language.ts`) — language detection + per-language keyword routing + localized draft templates. Bumped the rules path from 7/8 to 8/8 on the eval. Adding a third language is a table addition.
+- ✅ **Self-contained demo HTML viewer** (`demo/index.html`) — case-file layout, collapsible validator + eval panels with verbatim stdout, LLM ↔ rules toggle, ledger-style tool calls. Editorial UI with custom typography (Newsreader / IBM Plex Sans / JetBrains Mono).
+- ✅ **Vercel deployment** — `vercel.json` at the repo root, GitHub-connected, auto-deploys preview URLs per branch + production from `main`. Live: https://agents-take-home-assignment.vercel.app
+- ✅ **Graceful degradation** — agent runs without `ANTHROPIC_API_KEY`, warns once, falls back to the rules extractor. Reviewers can clone and `npm run triage` without a key.
+
+## What I would still do with another 4 hours
+
+- **LLM-judge eval harness** — extend the boolean substring assertions in `eval/expectations.json` into a graded score (no clinical advice, no implied send, empathy, operational specificity) using a small second Anthropic call per draft. Cheap and high-signal.
+- **Second safety classifier in parallel** — run a smaller model on every item just for "safeguarding y/n", OR the result with the main classifier. Never AND. Highest-leverage tail-risk reduction.
+- **Per-handler regression fixtures** — for each handler, freeze a synthetic input → expected tool sequence → expected draft tone, so refactors don't silently shift behavior. Complements the per-item eval.
+- **Feature flag for the rules path + nightly soak** — run both paths against a rolling set of synthetic variants overnight, alert on any eval regression.
+- **Provider-preference scoring** — layer caseload status, age range, and prior visit history on top of `find_slots` to rank slots, not just filter.
+- **Structured JSONL logging at item granularity** — feed a real triage dashboard (not just the demo HTML).
+- **OCR layer for attachments** — once real PDFs flow in, diff `extracted_intake` against OCR'd referral text to catch LLM hallucination on intake fields.
