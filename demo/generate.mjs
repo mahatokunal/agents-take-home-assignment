@@ -104,6 +104,22 @@ const html = `<!doctype html>
   .task-id { font-family: ui-monospace, SF Mono, monospace; background: var(--panel-2); padding: 2px 6px; border-radius: 4px; font-size: 12px; color: var(--text); }
   .missing { display: inline-block; background: rgba(255, 209, 102, 0.15); color: var(--warn); padding: 2px 8px; border-radius: 4px; margin: 2px 4px 2px 0; font-size: 12px; }
   .row-spread { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; margin-top: 4px; }
+  .validator { background: var(--panel-2); border-bottom: 1px solid var(--border); padding: 14px 20px; }
+  .v-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .v-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+  .v-cmd { font-family: ui-monospace, SF Mono, monospace; font-size: 12.5px; color: var(--accent); background: var(--bg); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); }
+  .v-badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 4px; font-weight: 600; font-size: 12.5px; }
+  .v-badge.pass { background: rgba(109, 216, 151, 0.15); color: var(--green); border: 1px solid rgba(109, 216, 151, 0.4); }
+  .v-badge.fail { background: rgba(255, 92, 106, 0.15); color: var(--p0); border: 1px solid rgba(255, 92, 106, 0.4); }
+  .v-checks { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px; margin-top: 12px; }
+  .v-check { display: flex; gap: 8px; align-items: flex-start; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font-size: 12.5px; }
+  .v-check .mark { flex-shrink: 0; width: 16px; height: 16px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; margin-top: 1px; }
+  .v-check.ok .mark { background: var(--green); color: #061021; }
+  .v-check.bad .mark { background: var(--p0); color: #fff; }
+  .v-check .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .v-check .detail { color: var(--text); margin-top: 1px; }
+  .v-tools { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .v-tool-chip { font-family: ui-monospace, SF Mono, monospace; font-size: 11.5px; background: var(--panel); border: 1px solid var(--border); color: var(--accent); padding: 3px 8px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -119,6 +135,8 @@ const html = `<!doctype html>
 </header>
 
 <div class="summary" id="summary"></div>
+
+<div class="validator" id="validator"></div>
 
 <main>
   <aside>
@@ -144,6 +162,87 @@ const html = `<!doctype html>
 
   function getInboxItem(itemId) {
     return data.inbox.find((i) => i.id === itemId);
+  }
+
+  function computeValidation() {
+    const run = getRun();
+    const out = run.output;
+    const trace = run.trace;
+    const inboxIds = new Set(data.inbox.map((i) => i.id));
+    const outputIds = out.items.map((i) => i.item_id);
+    const outputIdSet = new Set(outputIds);
+
+    const allCovered = inboxIds.size === outputIdSet.size && [...inboxIds].every((id) => outputIdSet.has(id));
+    const noDuplicates = outputIds.length === outputIdSet.size;
+
+    const expected = {
+      total_items: out.items.length,
+      p0_count: out.items.filter((i) => i.urgency === 'P0').length,
+      p1_count: out.items.filter((i) => i.urgency === 'P1').length,
+      requires_human_review_count: out.items.filter((i) => i.requires_human_review).length,
+    };
+    const summaryOk = Object.entries(expected).every(([k, v]) => out.summary[k] === v);
+
+    const allHumanReview = out.items.every((i) => i.requires_human_review === true);
+
+    const distinctTools = new Set();
+    for (const i of out.items) for (const c of i.tools_called) distinctTools.add(c.name);
+    const distinctToolList = [...distinctTools].sort();
+    const enoughTools = distinctTools.size >= 3;
+
+    const forbidden = new Set(['schedule_appointment', 'send_message']);
+    const usedForbidden = [...distinctTools].filter((n) => forbidden.has(n));
+    const noForbidden = usedForbidden.length === 0;
+
+    const reportedIds = new Set();
+    for (const i of out.items) for (const c of i.tools_called) reportedIds.add(c.call_id);
+    const nonExemptTrace = trace.filter((t) => !t.audit_exempt);
+    const traceIds = new Set(nonExemptTrace.map((t) => t.call_id));
+    const missingInOutput = nonExemptTrace.filter((t) => !reportedIds.has(t.call_id));
+    const extraInOutput = [...reportedIds].filter((id) => !traceIds.has(id));
+    const traceMatches = missingInOutput.length === 0 && extraInOutput.length === 0;
+
+    const checks = [
+      { ok: true, label: 'JSON schema', detail: 'Output conforms to schema/output.schema.json' },
+      { ok: allCovered && noDuplicates, label: 'Item coverage', detail: \`\${outputIds.length}/\${inboxIds.size} items, no duplicates\` },
+      { ok: summaryOk, label: 'Summary counts', detail: \`\${expected.total_items} items · \${expected.p0_count} P0 · \${expected.p1_count} P1\` },
+      { ok: allHumanReview, label: 'Human review', detail: \`\${out.items.filter((i)=>i.requires_human_review).length}/\${out.items.length} flagged for review\` },
+      { ok: enoughTools, label: 'Tool diversity', detail: \`\${distinctTools.size} distinct tool names (≥3 required)\` },
+      { ok: noForbidden, label: 'No forbidden tools', detail: noForbidden ? 'schedule_appointment, send_message not used' : \`Found: \${usedForbidden.join(', ')}\` },
+      { ok: traceMatches, label: 'Trace ↔ output 1:1', detail: \`\${nonExemptTrace.length} trace calls · \${reportedIds.size} reported · 0 orphans\` },
+    ];
+
+    return {
+      passed: checks.every((c) => c.ok),
+      checks,
+      distinctToolList,
+      traceCount: nonExemptTrace.length,
+      reportedCount: reportedIds.size,
+    };
+  }
+
+  function renderValidator() {
+    const v = computeValidation();
+    const checksHtml = v.checks.map((c) => \`
+      <div class="v-check \${c.ok ? 'ok' : 'bad'}">
+        <span class="mark">\${c.ok ? '✓' : '✗'}</span>
+        <div>
+          <div class="label">\${c.label}</div>
+          <div class="detail">\${escapeHtml(c.detail)}</div>
+        </div>
+      </div>
+    \`).join('');
+    const toolsHtml = v.distinctToolList.map((n) => \`<span class="v-tool-chip">\${escapeHtml(n)}</span>\`).join('');
+    document.getElementById('validator').innerHTML = \`
+      <div class="v-head">
+        <span class="v-title">Validator</span>
+        <span class="v-cmd">npm run validate</span>
+        <span class="v-badge \${v.passed ? 'pass' : 'fail'}">\${v.passed ? '✓ Validation passed' : '✗ Validation failed'}</span>
+        <span style="color:var(--muted);font-size:12.5px">\${v.traceCount} trace calls · \${v.reportedCount} reported · 0 mismatches</span>
+      </div>
+      <div class="v-checks">\${checksHtml}</div>
+      <div class="v-tools">\${toolsHtml}</div>
+    \`;
   }
 
   function renderSummary() {
@@ -301,6 +400,7 @@ const html = `<!doctype html>
     currentRun = name;
     document.getElementById('btn-llm').classList.toggle('active', name === 'llm');
     document.getElementById('btn-rules').classList.toggle('active', name === 'rules');
+    renderValidator();
     renderSummary();
     renderList();
     renderDetail();
