@@ -129,6 +129,12 @@ const html = `<!doctype html>
   .v-raw { margin-top: 12px; background: #000; border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; font-family: ui-monospace, SF Mono, monospace; font-size: 12px; color: #b8e6c8; white-space: pre-wrap; line-height: 1.55; }
   .v-raw .v-raw-label { color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; font-size: 10.5px; margin-bottom: 4px; }
   .v-disclaimer { margin-top: 8px; color: var(--muted); font-size: 11.5px; font-style: italic; }
+  .collapsible { transition: background 80ms; }
+  .collapsible .v-head, .collapsible .e-head { cursor: pointer; user-select: none; margin-bottom: 0; }
+  .collapsible.collapsed .panel-body { display: none; }
+  .collapsible:not(.collapsed) .panel-body { margin-top: 10px; }
+  .chevron { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--muted); font-size: 11px; transition: transform 120ms; margin-left: auto; }
+  .collapsible.collapsed .chevron { transform: rotate(-90deg); }
   .evalpanel { background: var(--panel); border-bottom: 1px solid var(--border); padding: 14px 20px; }
   .e-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 10px; }
   .e-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
@@ -160,9 +166,9 @@ const html = `<!doctype html>
 
 <div class="summary" id="summary"></div>
 
-<div class="validator" id="validator"></div>
+<div class="validator collapsible collapsed" id="validator"></div>
 
-<div class="evalpanel" id="evalpanel"></div>
+<div class="evalpanel collapsible collapsed" id="evalpanel"></div>
 
 <main>
   <aside>
@@ -327,12 +333,15 @@ const html = `<!doctype html>
         <span class="v-cmd">npm run eval</span>
         <span class="v-badge \${e.allPassed ? 'pass' : 'fail'}">\${e.allPassed ? '✓ All items passed' : '✗ ' + (e.results.length - e.passedItems) + ' item(s) failed'}</span>
         <span style="color:var(--muted);font-size:12.5px">\${e.passedItems}/\${e.results.length} items · \${e.passedChecks}/\${e.totalChecks} checks</span>
+        <span class="chevron" title="Click to expand/collapse">▾</span>
       </div>
-      <div class="e-grid">\${cardsHtml}</div>
-      <div class="v-raw">
-        <div class="v-raw-label">Ground truth — captured stdout from <code>npm run eval</code> on this snapshot</div>\${escapeHtml(getRun().evalText.trim())}
+      <div class="panel-body">
+        <div class="e-grid">\${cardsHtml}</div>
+        <div class="v-raw">
+          <div class="v-raw-label">Ground truth — captured stdout from <code>npm run eval</code> on this snapshot</div>\${escapeHtml(getRun().evalText.trim())}
+        </div>
+        <div class="v-disclaimer">Checks the agent's <em>semantic</em> decisions (classification, urgency, required/forbidden tools, draft safety, language detection) against golden expectations in <code>eval/expectations.json</code>. The structural validator above is necessary but not sufficient — this catches things like "did we correctly classify the safeguarding voicemail" that the validator can't see.</div>
       </div>
-      <div class="v-disclaimer">Checks the agent's <em>semantic</em> decisions (classification, urgency, required/forbidden tools, draft safety, language detection) against golden expectations in <code>eval/expectations.json</code>. The structural validator above is necessary but not sufficient — this catches things like "did we correctly classify the safeguarding voicemail" that the validator can't see.</div>
     \`;
   }
 
@@ -353,14 +362,17 @@ const html = `<!doctype html>
         <span class="v-title">Validator</span>
         <span class="v-cmd">npm run validate</span>
         <span class="v-badge \${v.passed ? 'pass' : 'fail'}">\${v.passed ? '✓ Validation passed' : '✗ Validation failed'}</span>
-        <span style="color:var(--muted);font-size:12.5px">\${v.traceCount} trace calls · \${v.reportedCount} reported · 0 mismatches</span>
+        <span style="color:var(--muted);font-size:12.5px">\${v.traceCount} trace · \${v.reportedCount} reported · 0 mismatches</span>
+        <span class="chevron" title="Click to expand/collapse">▾</span>
       </div>
-      <div class="v-checks">\${checksHtml}</div>
-      <div class="v-tools">\${toolsHtml}</div>
-      <div class="v-raw">
-        <div class="v-raw-label">Ground truth — captured stdout from <code>npm run validate</code> on this snapshot</div>\${escapeHtml(getRun().validate.trim())}
+      <div class="panel-body">
+        <div class="v-checks">\${checksHtml}</div>
+        <div class="v-tools">\${toolsHtml}</div>
+        <div class="v-raw">
+          <div class="v-raw-label">Ground truth — captured stdout from <code>npm run validate</code> on this snapshot</div>\${escapeHtml(getRun().validate.trim())}
+        </div>
+        <div class="v-disclaimer">The checks above are recomputed in-browser from the embedded JSON. The block underneath is the verbatim output of the actual <code>src/validate.ts</code> run against these snapshot files — that is the authoritative pass/fail.</div>
       </div>
-      <div class="v-disclaimer">The checks above are recomputed in-browser from the embedded JSON. The block underneath is the verbatim output of the actual <code>src/validate.ts</code> run against these snapshot files — that is the authoritative pass/fail.</div>
     \`;
   }
 
@@ -524,10 +536,24 @@ const html = `<!doctype html>
     renderSummary();
     renderList();
     renderDetail();
+    // innerHTML replaced the panel bodies and dropped their click listeners; rewire.
+    wireCollapsibles();
   }
 
   document.getElementById('btn-llm').addEventListener('click', () => setRun('llm'));
   document.getElementById('btn-rules').addEventListener('click', () => setRun('rules'));
+
+  function wireCollapsibles() {
+    document.querySelectorAll('.collapsible').forEach((panel) => {
+      const head = panel.querySelector('.v-head, .e-head');
+      if (!head || head.dataset.wired) return;
+      head.dataset.wired = '1';
+      head.addEventListener('click', (ev) => {
+        if (ev.target.closest('a, button, input, .v-cmd, pre, code')) return;
+        panel.classList.toggle('collapsed');
+      });
+    });
+  }
 
   setRun('llm');
 </script>
