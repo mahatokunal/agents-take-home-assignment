@@ -220,7 +220,7 @@
       <div class="v-checks">${checksHtml}</div>
       <div class="v-tools">${toolsHtml}</div>
       <div class="v-raw">
-        <div class="v-raw-label">Ground truth — captured stdout from `npm run validate` on this snapshot</div>${escapeHtml(getRun().validate.trim())}
+        <div class="v-raw-label">Ground truth — captured stdout from <code>npm run validate</code> on this snapshot</div>${escapeHtml(getRun().validate.trim())}
       </div>
       <div class="v-disclaimer">The checks above are recomputed in-browser from the embedded JSON. The block underneath is the verbatim output of the actual <code>src/validate.ts</code> run against these snapshot files — that is the authoritative pass/fail.</div>
     `;
