@@ -193,7 +193,9 @@ That's the loop the eval is built for: catch a real semantic regression that the
 
 ### Demo viewer
 
-`demo/index.html` is a self-contained page (open it directly via `file://`, no server) showing:
+**Live:** https://agents-take-home-assignment.vercel.app — deployed from `main` on every push.
+
+`demo/index.html` is a self-contained page (open it directly via `file://`, no server required) showing:
 
 - The 8 input inbox items (sender, channel, body, attachments).
 - The agent's decision per item — classification, urgency, rationale, missing info, draft reply, escalation.
